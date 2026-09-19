@@ -1,0 +1,6 @@
+{
+  "name": "Pengeluaran Gua",
+  "description": "Dashboard pengingat rincian keuangan bulanan pribadi, proyeksi saldo tabungan, dan simulasi pengeluaran.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
