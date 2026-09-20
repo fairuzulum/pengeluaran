@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +5,65 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+model FinancialSettings {
+  id                    Int     @id @default(autoincrement())
+  monthlySalary         Decimal @db.Decimal(15, 2)
+  startingBalance       Decimal @db.Decimal(15, 2)
+  startingMonthYear     String
+  projectionMonthsCount Int     @default(12)
+
+  expenses       ExpenseItem[]
+  specialIncomes SpecialIncome[]
+  simulations    SimulationExpense[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ExpenseItem {
+  id              String  @id
+  name            String
+  amount          Decimal @db.Decimal(15, 2)
+  category        String
+  isPaidThisMonth Boolean @default(false)
+  dueDateDay      Int?
+  endMonthYear    String?
+  notes           String?
+
+  settingsId Int
+  settings   FinancialSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SpecialIncome {
+  id        String  @id
+  name      String
+  amount    Decimal @db.Decimal(15, 2)
+  monthYear String
+  notes     String?
+
+  settingsId Int
+  settings   FinancialSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SimulationExpense {
+  id        String  @id
+  name      String
+  amount    Decimal @db.Decimal(15, 2)
+  monthYear String
+  isActive  Boolean @default(false)
+  notes     String?
+
+  settingsId Int
+  settings   FinancialSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
