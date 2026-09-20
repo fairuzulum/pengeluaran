@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { User } from 'firebase/auth';
 
@@ -10,12 +10,14 @@ import { SavingsTracker } from './components/SavingsTracker';
 import { WhatIfSimulation } from './components/WhatIfSimulation';
 import { SpecialIncomeManager } from './components/SpecialIncomeManager';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
+import { IncomePeriodManager } from './components/IncomePeriodManager';
 
 import {
   FinancialData,
   ExpenseItem,
   SpecialIncome,
   SimulationExpense,
+  IncomePeriod,
 } from './types';
 
 import {
@@ -25,6 +27,7 @@ import {
   calculateProjections,
   calculateRunwayMonths,
   isExpenseActiveInMonth,
+  isIncomeActiveInMonth,
 } from './utils/storage';
 
 import { initGoogleAuth } from './services/googleSheets';
@@ -35,6 +38,10 @@ import {
 } from './utils/formatters';
 
 export default function App() {
+  // =========================================================
+  // STATE
+  // =========================================================
+
   const [data, setData] = useState<FinancialData | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -47,6 +54,14 @@ export default function App() {
 
   const [cachedToken, setCachedToken] =
     useState<string | null>(null);
+
+  // =========================================================
+  // TANGGAL BULAN INI
+  // =========================================================
+
+  const currentMonthYear = useMemo(() => {
+    return new Date().toISOString().slice(0, 7);
+  }, []);
 
   // =========================================================
   // LOAD DATA DARI POSTGRESQL
@@ -95,6 +110,7 @@ export default function App() {
         setCurrentUser(user);
         setCachedToken(token);
       },
+
       () => {
         setCurrentUser(null);
         setCachedToken(null);
@@ -132,10 +148,10 @@ export default function App() {
   }, [data, isLoading]);
 
   // =========================================================
-  // DERIVED DATA
+  // PROJECTION
   //
-  // PENTING:
-  // Semua Hook HARUS berada sebelum conditional return.
+  // HARUS DIJALANKAN SEBELUM CONDITIONAL RETURN
+  // AGAR TIDAK ADA ERROR HOOKS ORDER.
   // =========================================================
 
   const projections = useMemo(() => {
@@ -146,6 +162,10 @@ export default function App() {
     return calculateProjections(data);
   }, [data]);
 
+  // =========================================================
+  // ACTIVE EXPENSES BULAN INI
+  // =========================================================
+
   const activeExpensesThisMonth = useMemo(() => {
     if (!data) {
       return [];
@@ -154,10 +174,46 @@ export default function App() {
     return data.expenses.filter((expense) =>
       isExpenseActiveInMonth(
         expense,
-        data.startingMonthYear
+        currentMonthYear
       )
     );
-  }, [data]);
+  }, [data, currentMonthYear]);
+
+  // =========================================================
+  // TOTAL PENGELUARAN TETAP BULAN INI
+  // =========================================================
+
+  const activeFixedExpenseThisMonth =
+    activeExpensesThisMonth.reduce(
+      (sum, expense) =>
+        sum + (Number(expense.amount) || 0),
+      0
+    );
+
+  // =========================================================
+  // PEMASUKAN RUTIN BULAN INI
+  // =========================================================
+
+  const currentMonthRegularIncome = data
+    ? data.incomePeriods
+        .filter((income) =>
+          isIncomeActiveInMonth(
+            income,
+            currentMonthYear
+          )
+        )
+        .reduce(
+          (sum, income) =>
+            sum + (Number(income.amount) || 0),
+          0
+        )
+    : 0;
+
+  // =========================================================
+  // PILIHAN BULAN
+  //
+  // 60 BULAN = 5 TAHUN
+  // =========================================================
 
   const projectionMonthOptions = useMemo(() => {
     if (!data) {
@@ -169,7 +225,7 @@ export default function App() {
       label: string;
     }[] = [];
 
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 60; i++) {
       const monthYear = addMonths(
         data.startingMonthYear,
         i
@@ -183,6 +239,86 @@ export default function App() {
 
     return options;
   }, [data]);
+
+  // =========================================================
+  // CURRENT MONTH PROJECTION
+  // =========================================================
+
+  const currentMonthProjection =
+    projections.find(
+      (projection) =>
+        projection.monthYear === currentMonthYear
+    ) ||
+    projections[0] ||
+    (data
+      ? {
+          monthIndex: 0,
+
+          monthYear: currentMonthYear,
+
+          monthLabel:
+            formatMonthYearLabel(
+              currentMonthYear
+            ),
+
+          fullMonthLabel:
+            formatMonthYearLabel(
+              currentMonthYear
+            ),
+
+          startingBalance:
+            data.currentBalance,
+
+          regularIncome:
+            currentMonthRegularIncome,
+
+          specialIncome: 0,
+
+          totalIncome:
+            currentMonthRegularIncome,
+
+          regularExpense:
+            activeFixedExpenseThisMonth,
+
+          simulatedExpense: 0,
+
+          totalExpense:
+            activeFixedExpenseThisMonth,
+
+          netCashflow:
+            currentMonthRegularIncome -
+            activeFixedExpenseThisMonth,
+
+          endingBalance:
+            data.currentBalance +
+            currentMonthRegularIncome -
+            activeFixedExpenseThisMonth,
+
+          baselineEndingBalance:
+            data.currentBalance +
+            currentMonthRegularIncome -
+            activeFixedExpenseThisMonth,
+
+          isDeficit:
+            currentMonthRegularIncome -
+              activeFixedExpenseThisMonth <
+            0,
+
+          isNegativeBalance:
+            data.currentBalance +
+              currentMonthRegularIncome -
+              activeFixedExpenseThisMonth <
+            0,
+        }
+      : null);
+
+  // =========================================================
+  // RUNWAY
+  // =========================================================
+
+  const runway = calculateRunwayMonths(
+    projections
+  );
 
   // =========================================================
   // LOADING SCREEN
@@ -232,9 +368,7 @@ export default function App() {
                 currentBalance: 0,
 
                 startingMonthYear:
-                  new Date()
-                    .toISOString()
-                    .slice(0, 7),
+                  currentMonthYear,
 
                 projectionMonthsCount: 60,
 
@@ -248,7 +382,9 @@ export default function App() {
               };
 
               try {
-                await saveFinancialData(emptyData);
+                await saveFinancialData(
+                  emptyData
+                );
 
                 setData(emptyData);
               } catch (error) {
@@ -269,125 +405,168 @@ export default function App() {
   }
 
   // =========================================================
-  // ACTIVE EXPENSE
-  // =========================================================
-
-  const activeFixedExpenseThisMonth =
-    activeExpensesThisMonth.reduce(
-      (sum, expense) =>
-        sum + (Number(expense.amount) || 0),
-      0
-    );
-
-  // =========================================================
-  // CURRENT MONTH PROJECTION
-  // =========================================================
-
-  const currentMonthProjection =
-    projections[0] || {
-      monthIndex: 0,
-
-      monthYear:
-        data.startingMonthYear,
-
-      monthLabel:
-        formatMonthYearLabel(
-          data.startingMonthYear
-        ),
-
-      fullMonthLabel:
-        formatMonthYearLabel(
-          data.startingMonthYear
-        ),
-
-      startingBalance:
-        data.currentBalance,
-
-      regularIncome: 0,
-
-      specialIncome: 0,
-
-      totalIncome: 0,
-
-      regularExpense:
-        activeFixedExpenseThisMonth,
-
-      simulatedExpense: 0,
-
-      totalExpense:
-        activeFixedExpenseThisMonth,
-
-      netCashflow:
-        -activeFixedExpenseThisMonth,
-
-      endingBalance:
-        data.currentBalance -
-        activeFixedExpenseThisMonth,
-
-      baselineEndingBalance:
-        data.currentBalance -
-        activeFixedExpenseThisMonth,
-
-      isDeficit: true,
-
-      isNegativeBalance:
-        data.currentBalance -
-          activeFixedExpenseThisMonth <
-        0,
-    };
-
-  // =========================================================
-  // RUNWAY
-  // =========================================================
-
-  const runway =
-    calculateRunwayMonths(projections);
-
-  // =========================================================
-  // INCOME RUTIN BULAN INI
-  // =========================================================
-
-  const currentMonthRegularIncome =
-    data.incomePeriods
-      .filter((income) => {
-        if (
-          data.startingMonthYear <
-          income.startMonth
-        ) {
-          return false;
-        }
-
-        if (!income.endMonth) {
-          return true;
-        }
-
-        return (
-          data.startingMonthYear <=
-          income.endMonth
-        );
-      })
-      .reduce(
-        (sum, income) =>
-          sum +
-          (Number(income.amount) || 0),
-        0
-      );
-
-  // =========================================================
-  // HANDLERS
+  // HANDLER SALDO AWAL
   // =========================================================
 
   const handleUpdateStartingBalance = (
     newBalance: number
   ) => {
-    setData((previous) => ({
-      ...previous,
-      currentBalance: newBalance,
-    }));
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        currentBalance: Number(newBalance) || 0,
+      };
+    });
   };
 
   // =========================================================
-  // ADD EXPENSE
+  // HANDLER SALARY / PEMASUKAN RUTIN
+  //
+  // DashboardSummary lama masih punya tombol edit salary.
+  // Sekarang tombol itu akan mengubah income period aktif
+  // bulan ini.
+  // =========================================================
+
+  const handleUpdateSalary = (
+    newSalary: number
+  ) => {
+    const amount = Number(newSalary) || 0;
+
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      const activeIncomeIndex =
+        previous.incomePeriods.findIndex(
+          (income) =>
+            isIncomeActiveInMonth(
+              income,
+              currentMonthYear
+            )
+        );
+
+      // Kalau belum ada income period aktif,
+      // buat income baru.
+      if (activeIncomeIndex === -1) {
+        const newIncome: IncomePeriod = {
+          id: `income-${Date.now()}`,
+          name: 'Pemasukan Rutin',
+          amount,
+          startMonth: currentMonthYear,
+          endMonth: undefined,
+          notes: '',
+        };
+
+        return {
+          ...previous,
+
+          incomePeriods: [
+            ...previous.incomePeriods,
+            newIncome,
+          ],
+        };
+      }
+
+      // Kalau sudah ada income aktif,
+      // update income tersebut.
+      return {
+        ...previous,
+
+        incomePeriods:
+          previous.incomePeriods.map(
+            (income, index) =>
+              index === activeIncomeIndex
+                ? {
+                    ...income,
+                    amount,
+                  }
+                : income
+          ),
+      };
+    });
+  };
+
+  // =========================================================
+  // INCOME PERIOD
+  // =========================================================
+
+  const handleAddIncomePeriod = (
+    income: Omit<IncomePeriod, 'id'>
+  ) => {
+    const newIncome: IncomePeriod = {
+      ...income,
+      id: `income-${Date.now()}`,
+    };
+
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+
+        incomePeriods: [
+          ...previous.incomePeriods,
+          newIncome,
+        ],
+      };
+    });
+  };
+
+  const handleUpdateIncomePeriod = (
+    id: string,
+    updated: Partial<IncomePeriod>
+  ) => {
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+
+        incomePeriods:
+          previous.incomePeriods.map(
+            (income) =>
+              income.id === id
+                ? {
+                    ...income,
+                    ...updated,
+                  }
+                : income
+          ),
+      };
+    });
+  };
+
+  const handleDeleteIncomePeriod = (
+    id: string
+  ) => {
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+
+        incomePeriods:
+          previous.incomePeriods.filter(
+            (income) =>
+              income.id !== id
+          ),
+      };
+    });
+  };
+
+  // =========================================================
+  // EXPENSE
   // =========================================================
 
   const handleAddExpense = (
@@ -398,59 +577,70 @@ export default function App() {
       id: `exp-${Date.now()}`,
     };
 
-    setData((previous) => ({
-      ...previous,
-      expenses: [
-        ...previous.expenses,
-        newItem,
-      ],
-    }));
-  };
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-  // =========================================================
-  // UPDATE EXPENSE
-  // =========================================================
+      return {
+        ...previous,
+
+        expenses: [
+          ...previous.expenses,
+          newItem,
+        ],
+      };
+    });
+  };
 
   const handleUpdateExpense = (
     id: string,
     updated: Partial<ExpenseItem>
   ) => {
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      expenses:
-        previous.expenses.map(
-          (expense) =>
-            expense.id === id
-              ? {
-                  ...expense,
-                  ...updated,
-                }
-              : expense
-        ),
-    }));
+      return {
+        ...previous,
+
+        expenses:
+          previous.expenses.map(
+            (expense) =>
+              expense.id === id
+                ? {
+                    ...expense,
+                    ...updated,
+                  }
+                : expense
+          ),
+      };
+    });
   };
-
-  // =========================================================
-  // DELETE EXPENSE
-  // =========================================================
 
   const handleDeleteExpense = (
     id: string
   ) => {
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      expenses:
-        previous.expenses.filter(
-          (expense) =>
-            expense.id !== id
-        ),
-    }));
+      return {
+        ...previous,
+
+        expenses:
+          previous.expenses.filter(
+            (expense) =>
+              expense.id !== id
+          ),
+      };
+    });
   };
 
   // =========================================================
-  // ADD SPECIAL INCOME
+  // SPECIAL INCOME
   // =========================================================
 
   const handleAddSpecialIncome = (
@@ -461,36 +651,44 @@ export default function App() {
       id: `inc-${Date.now()}`,
     };
 
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      specialIncomes: [
-        ...previous.specialIncomes,
-        newIncome,
-      ],
-    }));
+      return {
+        ...previous,
+
+        specialIncomes: [
+          ...previous.specialIncomes,
+          newIncome,
+        ],
+      };
+    });
   };
-
-  // =========================================================
-  // DELETE SPECIAL INCOME
-  // =========================================================
 
   const handleDeleteSpecialIncome = (
     id: string
   ) => {
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      specialIncomes:
-        previous.specialIncomes.filter(
-          (income) =>
-            income.id !== id
-        ),
-    }));
+      return {
+        ...previous,
+
+        specialIncomes:
+          previous.specialIncomes.filter(
+            (income) =>
+              income.id !== id
+          ),
+      };
+    });
   };
 
   // =========================================================
-  // ADD SIMULATION
+  // SIMULATION
   // =========================================================
 
   const handleAddSimulation = (
@@ -499,76 +697,95 @@ export default function App() {
       'id'
     >
   ) => {
-    const newSimulation:
-      SimulationExpense = {
+    const newSimulation: SimulationExpense = {
       ...simulation,
       id: `sim-${Date.now()}`,
     };
 
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      simulations: [
-        ...previous.simulations,
-        newSimulation,
-      ],
-    }));
+      return {
+        ...previous,
+
+        simulations: [
+          ...previous.simulations,
+          newSimulation,
+        ],
+      };
+    });
   };
-
-  // =========================================================
-  // TOGGLE SIMULATION
-  // =========================================================
 
   const handleToggleSimulation = (
     id: string
   ) => {
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      simulations:
-        previous.simulations.map(
-          (simulation) =>
-            simulation.id === id
-              ? {
-                  ...simulation,
+      return {
+        ...previous,
 
-                  isActive:
-                    !simulation.isActive,
-                }
-              : simulation
-        ),
-    }));
+        simulations:
+          previous.simulations.map(
+            (simulation) =>
+              simulation.id === id
+                ? {
+                    ...simulation,
+                    isActive:
+                      !simulation.isActive,
+                  }
+                : simulation
+          ),
+      };
+    });
   };
-
-  // =========================================================
-  // DELETE SIMULATION
-  // =========================================================
 
   const handleDeleteSimulation = (
     id: string
   ) => {
-    setData((previous) => ({
-      ...previous,
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
 
-      simulations:
-        previous.simulations.filter(
-          (simulation) =>
-            simulation.id !== id
-        ),
-    }));
+      return {
+        ...previous,
+
+        simulations:
+          previous.simulations.filter(
+            (simulation) =>
+              simulation.id !== id
+          ),
+      };
+    });
   };
 
   // =========================================================
-  // CHANGE PROJECTION MONTH COUNT
+  // JUMLAH BULAN PROJECTION
   // =========================================================
 
   const handleMonthsCountChange = (
     count: number
   ) => {
-    setData((previous) => ({
-      ...previous,
-      projectionMonthsCount: count,
-    }));
+    setData((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+
+        projectionMonthsCount:
+          Math.max(
+            1,
+            Math.min(60, count)
+          ),
+      };
+    });
   };
 
   // =========================================================
@@ -576,6 +793,14 @@ export default function App() {
   // =========================================================
 
   const handleResetData = async () => {
+    const confirmed = window.confirm(
+      'Yakin mau menghapus seluruh data financial dan mulai dari kosong?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     try {
       const fresh =
         await resetFinancialData();
@@ -658,40 +883,66 @@ export default function App() {
             DASHBOARD SUMMARY
         =================================================== */}
 
-        <DashboardSummary
-          monthlySalary={
-            currentMonthRegularIncome
+        {currentMonthProjection && (
+          <DashboardSummary
+            monthlySalary={
+              currentMonthRegularIncome
+            }
+
+            startingBalance={
+              data.currentBalance
+            }
+
+            currentMonthProjection={
+              currentMonthProjection
+            }
+
+            firstNegativeMonthLabel={
+              runway.firstNegativeMonthLabel
+            }
+
+            monthsRemaining={
+              runway.monthsRemaining
+            }
+
+            onUpdateSalary={
+              handleUpdateSalary
+            }
+
+            onUpdateStartingBalance={
+              handleUpdateStartingBalance
+            }
+          />
+        )}
+
+        {/* ===================================================
+            PEMASUKAN RUTIN
+        =================================================== */}
+
+        <IncomePeriodManager
+          incomePeriods={
+            data.incomePeriods
           }
 
-          startingBalance={
-            data.currentBalance
+          projectionMonthOptions={
+            projectionMonthOptions
           }
 
-          currentMonthProjection={
-            currentMonthProjection
+          onAddIncomePeriod={
+            handleAddIncomePeriod
           }
 
-          firstNegativeMonthLabel={
-            runway.firstNegativeMonthLabel
+          onUpdateIncomePeriod={
+            handleUpdateIncomePeriod
           }
 
-          monthsRemaining={
-            runway.monthsRemaining
-          }
-
-          onUpdateSalary={() => {
-            console.log(
-              'Gunakan Income Periods untuk mengubah pemasukan rutin.'
-            );
-          }}
-
-          onUpdateStartingBalance={
-            handleUpdateStartingBalance
+          onDeleteIncomePeriod={
+            handleDeleteIncomePeriod
           }
         />
 
         {/* ===================================================
-            PROJECTION CHART
+            GRAFIK
         =================================================== */}
 
         <ProjectionChart
@@ -713,13 +964,13 @@ export default function App() {
         />
 
         {/* ===================================================
-            EXPENSE + SIDEBAR
+            EXPENSE + SIMULATION
         =================================================== */}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
           {/* =================================================
-              EXPENSE LIST
+              EXPENSE
           ================================================= */}
 
           <div className="lg:col-span-7 space-y-6">
@@ -730,7 +981,7 @@ export default function App() {
               }
 
               currentMonthYear={
-                data.startingMonthYear
+                currentMonthYear
               }
 
               monthOptions={
@@ -753,13 +1004,13 @@ export default function App() {
           </div>
 
           {/* =================================================
-              RIGHT SIDEBAR
+              RIGHT SIDE
           ================================================= */}
 
           <div className="lg:col-span-5 space-y-6">
 
             {/* ===============================================
-                WHAT IF SIMULATION
+                WHAT IF
             =============================================== */}
 
             <WhatIfSimulation
