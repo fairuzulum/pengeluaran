@@ -9,14 +9,29 @@ datasource db {
 
 model FinancialSettings {
   id                    Int     @id @default(autoincrement())
-  monthlySalary         Decimal @db.Decimal(15, 2)
-  startingBalance       Decimal @db.Decimal(15, 2)
+  currentBalance        Decimal @db.Decimal(15, 2)
   startingMonthYear     String
-  projectionMonthsCount Int     @default(12)
+  projectionMonthsCount Int     @default(60)
 
+  incomePeriods  IncomePeriod[]
   expenses       ExpenseItem[]
   specialIncomes SpecialIncome[]
   simulations    SimulationExpense[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model IncomePeriod {
+  id         String  @id
+  name       String
+  amount     Decimal @db.Decimal(15, 2)
+  startMonth String
+  endMonth   String?
+  notes      String?
+
+  settingsId Int
+  settings   FinancialSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -27,9 +42,10 @@ model ExpenseItem {
   name            String
   amount          Decimal @db.Decimal(15, 2)
   category        String
+  startMonthYear  String
+  endMonthYear    String?
   isPaidThisMonth Boolean @default(false)
   dueDateDay      Int?
-  endMonthYear    String?
   notes           String?
 
   settingsId Int

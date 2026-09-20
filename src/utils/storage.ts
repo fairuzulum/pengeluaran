@@ -1,229 +1,312 @@
-import { FinancialData, ExpenseItem, SpecialIncome, SimulationExpense, MonthProjection } from '../types';
-import { addMonths, formatMonthYearLabel, formatMonthYearShort } from './formatters';
 
-export const DEFAULT_FINANCIAL_DATA: FinancialData = {
-  monthlySalary: 5500000,
-  startingBalance: 10300000,
-  startingMonthYear: '2026-09',
-  expenses: [
-    {
-      id: 'exp-1',
-      name: 'Cicilan Maybank',
-      amount: 1600000,
-      category: 'cicilan',
-      isPaidThisMonth: false,
-      dueDateDay: 10,
-      notes: 'Cicilan bulanan Maybank'
-    },
-    {
-      id: 'exp-2',
-      name: 'Cicilan SeaBank',
-      amount: 1460000,
-      category: 'cicilan',
-      isPaidThisMonth: false,
-      dueDateDay: 15,
-      notes: 'Cicilan pinjaman SeaBank'
-    },
-    {
-      id: 'exp-3',
-      name: 'Cicilan Kredivo',
-      amount: 1700000,
-      category: 'cicilan',
-      isPaidThisMonth: false,
-      dueDateDay: 20,
-      notes: 'Cicilan paylater Kredivo'
-    },
-    {
-      id: 'exp-4',
-      name: 'Cicilan Motor',
-      amount: 1000000,
-      category: 'cicilan',
-      isPaidThisMonth: false,
-      dueDateDay: 5,
-      notes: 'Leasing motor bulanan'
-    },
-    {
-      id: 'exp-5',
-      name: 'Transportasi',
-      amount: 500000,
-      category: 'kebutuhan',
-      isPaidThisMonth: false,
-      notes: 'Bensin & operasional harian'
-    },
-    {
-      id: 'exp-6',
-      name: 'Listrik',
-      amount: 200000,
-      category: 'utilitas',
-      isPaidThisMonth: false,
-      dueDateDay: 20,
-      notes: 'Token / tagihan listrik PLN'
-    },
-    {
-      id: 'exp-7',
-      name: 'Wifi',
-      amount: 200000,
-      category: 'utilitas',
-      isPaidThisMonth: false,
-      dueDateDay: 15,
-      notes: 'Internet rumah bulanan'
-    },
-    {
-      id: 'exp-8',
-      name: 'Jajan / kebutuhan pribadi',
-      amount: 500000,
-      category: 'pribadi',
-      isPaidThisMonth: false,
-      notes: 'Makan di luar, kopi, dan kebutuhan harian'
-    }
-  ],
-  specialIncomes: [
-    {
-      id: 'inc-1',
-      name: 'Kompensasi Kontrak Kerja',
-      amount: 5500000,
-      monthYear: '2026-12',
-      notes: 'Cair khusus bulan Desember (tambahan, sekali setahun)'
-    }
-  ],
-  simulations: [
-    {
-      id: 'sim-1',
-      name: 'Servis Motor & Ganti Ban',
-      amount: 450000,
-      monthYear: '2026-10',
-      isActive: false,
-      notes: 'Simulasi pengeluaran bengkel berkala'
-    },
-    {
-      id: 'sim-2',
-      name: 'Kondangan & Hadiah Nikah',
-      amount: 300000,
-      monthYear: '2026-11',
-      isActive: false,
-      notes: 'Amplop kondangan teman'
-    }
-  ],
-  projectionMonthsCount: 12
-};
+import {
+  FinancialData,
+  ExpenseItem,
+  SpecialIncome,
+  SimulationExpense,
+  MonthProjection,
+  IncomePeriod,
+} from '../types';
 
-const STORAGE_KEY = 'pengeluaran_gua_v1';
+import {
+  addMonths,
+  formatMonthYearLabel,
+  formatMonthYearShort,
+} from './formatters';
 
-/**
- * Checks whether an expense item is still active (belum selesai/habis) on a given month.
- * If endMonthYear is not set, the expense is treated as recurring indefinitely.
- * If set, the expense is still counted on its end month itself, and stops the month after.
- */
-export function isExpenseActiveInMonth(item: ExpenseItem, monthYear: string): boolean {
+const API_URL = 'http://localhost:3001/api';
+
+export function isExpenseActiveInMonth(
+  item: ExpenseItem,
+  monthYear: string
+): boolean {
+  if (monthYear < item.startMonthYear) return false;
+
   if (!item.endMonthYear) return true;
+
   return monthYear <= item.endMonthYear;
 }
 
-export function loadFinancialData(): FinancialData {
+export function isIncomeActiveInMonth(
+  income: IncomePeriod,
+  monthYear: string
+): boolean {
+  if (monthYear < income.startMonth) return false;
+
+  if (!income.endMonth) return true;
+
+  return monthYear <= income.endMonth;
+}
+
+/**
+ * Mengambil seluruh data financial dari PostgreSQL melalui API.
+ *
+ * Kalau database masih kosong, hasilnya null.
+ * Kita TIDAK membuat default financial data.
+ */
+export async function loadFinancialData(): Promise<FinancialData | null> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_FINANCIAL_DATA;
-    const parsed = JSON.parse(raw);
+    const response = await fetch(`${API_URL}/financial-data`);
+
+    if (!response.ok) {
+      throw new Error(
+        `Gagal mengambil financial data: HTTP ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data) {
+      return null;
+    }
+
     return {
-      ...DEFAULT_FINANCIAL_DATA,
-      ...parsed,
-      expenses: parsed.expenses && parsed.expenses.length > 0 ? parsed.expenses : DEFAULT_FINANCIAL_DATA.expenses,
-      specialIncomes: parsed.specialIncomes || DEFAULT_FINANCIAL_DATA.specialIncomes,
-      simulations: parsed.simulations || DEFAULT_FINANCIAL_DATA.simulations
+      currentBalance: Number(data.currentBalance) || 0,
+      startingMonthYear: data.startingMonthYear,
+      projectionMonthsCount: Number(data.projectionMonthsCount) || 60,
+
+      incomePeriods: Array.isArray(data.incomePeriods)
+        ? data.incomePeriods
+        : [],
+
+      expenses: Array.isArray(data.expenses)
+        ? data.expenses
+        : [],
+
+      specialIncomes: Array.isArray(data.specialIncomes)
+        ? data.specialIncomes
+        : [],
+
+      simulations: Array.isArray(data.simulations)
+        ? data.simulations
+        : [],
     };
-  } catch (e) {
-    console.warn('Gagal memuat data dari localStorage, menggunakan default', e);
-    return DEFAULT_FINANCIAL_DATA;
+  } catch (error) {
+    console.error('Gagal memuat financial data dari API:', error);
+    throw error;
   }
 }
 
-export function saveFinancialData(data: FinancialData): void {
+/**
+ * Menyimpan seluruh financial data ke PostgreSQL melalui API.
+ */
+export async function saveFinancialData(
+  data: FinancialData
+): Promise<void> {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (e) {
-    console.error('Gagal menyimpan data ke localStorage', e);
+    const response = await fetch(`${API_URL}/financial-data`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null);
+
+      throw new Error(
+        errorBody?.error ||
+          `Gagal menyimpan financial data: HTTP ${response.status}`
+      );
+    }
+  } catch (error) {
+    console.error('Gagal menyimpan financial data ke API:', error);
+    throw error;
   }
 }
 
-export function resetFinancialData(): FinancialData {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch (e) {
-    console.error('Gagal menghapus cache', e);
-  }
-  return DEFAULT_FINANCIAL_DATA;
+/**
+ * Reset financial data.
+ *
+ * Karena database sekarang menjadi sumber data utama,
+ * reset dilakukan dengan mengirim data kosong ke API.
+ */
+export async function resetFinancialData(): Promise<FinancialData> {
+  const emptyData: FinancialData = {
+    currentBalance: 0,
+    startingMonthYear: new Date().toISOString().slice(0, 7),
+    projectionMonthsCount: 60,
+
+    incomePeriods: [],
+    expenses: [],
+    specialIncomes: [],
+    simulations: [],
+  };
+
+  await saveFinancialData(emptyData);
+
+  return emptyData;
+}
+
+/**
+ * Menghitung income reguler pada bulan tertentu
+ * berdasarkan income period yang aktif.
+ */
+function calculateRegularIncome(
+  incomePeriods: IncomePeriod[],
+  monthYear: string
+): number {
+  return incomePeriods
+    .filter((income) => isIncomeActiveInMonth(income, monthYear))
+    .reduce(
+      (sum, income) => sum + (Number(income.amount) || 0),
+      0
+    );
 }
 
 /**
  * Calculates month-by-month financial projection.
  */
-export function calculateProjections(data: FinancialData): MonthProjection[] {
+export function calculateProjections(
+  data: FinancialData
+): MonthProjection[] {
   const {
-    monthlySalary,
-    startingBalance,
+    currentBalance,
     startingMonthYear,
     expenses,
+    incomePeriods,
     specialIncomes,
     simulations,
-    projectionMonthsCount = 12
+    projectionMonthsCount = 60,
   } = data;
 
   const projections: MonthProjection[] = [];
 
-  let currentBalance = startingBalance;
-  let currentBaselineBalance = startingBalance;
+  let currentBalanceValue = currentBalance;
+  let currentBaselineBalance = currentBalance;
 
   for (let i = 0; i < projectionMonthsCount; i++) {
     const monthYear = addMonths(startingMonthYear, i);
+
     const monthLabel = formatMonthYearShort(monthYear);
     const fullMonthLabel = formatMonthYearLabel(monthYear);
 
-    // Fixed expenses that are still active this month (belum lewat target bulan selesai)
-    const activeExpensesThisMonth = expenses.filter(item => isExpenseActiveInMonth(item, monthYear));
-    const totalFixedExpenseThisMonth = activeExpensesThisMonth.reduce(
-      (sum, item) => sum + (Number(item.amount) || 0),
+    // =========================================================
+    // INCOME PERIODS
+    // =========================================================
+
+    const regularIncome = calculateRegularIncome(
+      incomePeriods,
+      monthYear
+    );
+
+    // =========================================================
+    // FIXED EXPENSES
+    // =========================================================
+
+    const activeExpensesThisMonth = expenses.filter((item) =>
+      isExpenseActiveInMonth(item, monthYear)
+    );
+
+    const totalFixedExpenseThisMonth =
+      activeExpensesThisMonth.reduce(
+        (sum, item) => sum + (Number(item.amount) || 0),
+        0
+      );
+
+    // =========================================================
+    // SPECIAL INCOME
+    // =========================================================
+
+    const monthSpecialIncomes = specialIncomes.filter(
+      (income) => income.monthYear === monthYear
+    );
+
+    const specialIncomeAmount = monthSpecialIncomes.reduce(
+      (sum, income) => sum + (Number(income.amount) || 0),
       0
     );
 
-    // Special Incomes for this month
-    const monthSpecialIncomes = specialIncomes.filter(inc => inc.monthYear === monthYear);
-    const specialIncomeAmount = monthSpecialIncomes.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+    // =========================================================
+    // SIMULATED EXPENSE
+    // =========================================================
 
-    // Simulated Expenses for this month (only active ones)
-    const monthSimulations = simulations.filter(sim => sim.isActive && sim.monthYear === monthYear);
-    const simulatedExpenseAmount = monthSimulations.reduce((sum, sim) => sum + (Number(sim.amount) || 0), 0);
+    const monthSimulations = simulations.filter(
+      (simulation) =>
+        simulation.isActive &&
+        simulation.monthYear === monthYear
+    );
 
-    const totalIncome = monthlySalary + specialIncomeAmount;
-    const totalExpense = totalFixedExpenseThisMonth + simulatedExpenseAmount;
-    const netCashflow = totalIncome - totalExpense;
+    const simulatedExpenseAmount = monthSimulations.reduce(
+      (sum, simulation) =>
+        sum + (Number(simulation.amount) || 0),
+      0
+    );
 
-    const startBal = currentBalance;
-    const endBal = startBal + netCashflow;
-    currentBalance = endBal;
+    // =========================================================
+    // TOTAL
+    // =========================================================
 
-    // Baseline calculation (without active simulations)
-    const baselineTotalExpense = totalFixedExpenseThisMonth;
-    const baselineNetCashflow = totalIncome - baselineTotalExpense;
-    const baselineEndBal = currentBaselineBalance + baselineNetCashflow;
-    currentBaselineBalance = baselineEndBal;
+    const totalIncome =
+      regularIncome + specialIncomeAmount;
+
+    const totalExpense =
+      totalFixedExpenseThisMonth + simulatedExpenseAmount;
+
+    const netCashflow =
+      totalIncome - totalExpense;
+
+    // =========================================================
+    // NORMAL BALANCE
+    // =========================================================
+
+    const startBal = currentBalanceValue;
+
+    const endBal =
+      startBal + netCashflow;
+
+    currentBalanceValue = endBal;
+
+    // =========================================================
+    // BASELINE
+    // Tanpa simulation expense
+    // =========================================================
+
+    const baselineTotalExpense =
+      totalFixedExpenseThisMonth;
+
+    const baselineNetCashflow =
+      totalIncome - baselineTotalExpense;
+
+    const baselineEndBal =
+      currentBaselineBalance +
+      baselineNetCashflow;
+
+    currentBaselineBalance =
+      baselineEndBal;
+
+    // =========================================================
+    // RESULT
+    // =========================================================
 
     projections.push({
       monthIndex: i,
+
       monthYear,
       monthLabel,
       fullMonthLabel,
+
       startingBalance: startBal,
-      regularIncome: monthlySalary,
+
+      regularIncome,
       specialIncome: specialIncomeAmount,
       totalIncome,
+
       regularExpense: totalFixedExpenseThisMonth,
       simulatedExpense: simulatedExpenseAmount,
       totalExpense,
+
       netCashflow,
       endingBalance: endBal,
-      baselineEndingBalance: baselineEndBal,
+
+      baselineEndingBalance:
+        baselineEndBal,
+
       isDeficit: netCashflow < 0,
-      isNegativeBalance: endBal < 0
+
+      isNegativeBalance:
+        endBal < 0,
     });
   }
 
@@ -231,25 +314,36 @@ export function calculateProjections(data: FinancialData): MonthProjection[] {
 }
 
 /**
- * Calculates runway (how many months savings will last under current deficit).
+ * Calculates runway.
  */
-export function calculateRunwayMonths(projections: MonthProjection[]): {
+export function calculateRunwayMonths(
+  projections: MonthProjection[]
+): {
   firstNegativeMonthIndex: number | null;
   firstNegativeMonthLabel: string | null;
   monthsRemaining: number | null;
 } {
-  const firstNegative = projections.find(p => p.endingBalance < 0);
+  const firstNegative = projections.find(
+    (projection) =>
+      projection.endingBalance < 0
+  );
+
   if (!firstNegative) {
     return {
       firstNegativeMonthIndex: null,
       firstNegativeMonthLabel: null,
-      monthsRemaining: null
+      monthsRemaining: null,
     };
   }
 
   return {
-    firstNegativeMonthIndex: firstNegative.monthIndex,
-    firstNegativeMonthLabel: firstNegative.fullMonthLabel,
-    monthsRemaining: firstNegative.monthIndex
+    firstNegativeMonthIndex:
+      firstNegative.monthIndex,
+
+    firstNegativeMonthLabel:
+      firstNegative.fullMonthLabel,
+
+    monthsRemaining:
+      firstNegative.monthIndex,
   };
 }
