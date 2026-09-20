@@ -177,7 +177,7 @@ export const ProjectionChart: React.FC<
         {/* HORIZON */}
 
         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs">
-          {[6, 12, 24].map(
+            {[6, 12, 24, 60].map(
             (count) => (
               <button
                 key={count}
